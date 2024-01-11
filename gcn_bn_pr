@@ -3,129 +3,160 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn import Sequential, Linear, ReLU
 from torch_geometric.nn import GCNConv
-#from torch_geometric.nn import global_mean_pool as gmp
-import pandas as pd
-import numpy as np
 from torch_geometric.nn import global_max_pool as gmp
+import pandas as pd
+# from torch_geometric.nn import global_mean_pool as gmp
+import numpy as np
 
 
+class GraphConvLayer(nn.Module):
+    def __init__(self, in_channels, out_channels, dropout):
+        super(GraphConvLayer, self).__init__()
+        self.conv1 = GCNConv(in_channels, in_channels)
+        self.bn1 = nn.BatchNorm1d(in_channels)
+        self.conv2 = GCNConv(in_channels, in_channels * 2)
+        self.bn2 = nn.BatchNorm1d(in_channels * 2)
+        self.conv3 = GCNConv(in_channels * 2, out_channels)
+        self.bn3 = nn.BatchNorm1d(out_channels)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x, edge_index):
+        x = self.conv1(x, edge_index)
+        x = self.bn1(x)
+        x = F.elu(x)
+        x = self.dropout(x)
+        x = self.conv2(x, edge_index)
+        x = self.bn2(x)
+        x = F.elu(x)
+        x = self.dropout(x)
+        x = self.conv3(x, edge_index)
+        x = self.bn3(x)
+
+        return x
 
 
 class GCNNet(torch.nn.Module):
-    def __init__(self, num_features_xd=62, emb_dim= 128, output_dim=128, dropout=0.2):
+    def __init__(self, num_features_xd=62, emb_dim=128, output_dim=128, dropout=0.2):
         super(GCNNet, self).__init__()
-        # self.output_dim = output_dim
-        # graph drug layers
-        self.drug1_conv1 = GCNConv(num_features_xd, num_features_xd)
-        self.drug1_bn1 = nn.BatchNorm1d(num_features_xd)
-        self.drug1_conv2 = GCNConv(num_features_xd, num_features_xd * 2)
-        self.drug1_bn2 = nn.BatchNorm1d(num_features_xd * 2)
-        self.drug1_conv3 = GCNConv(num_features_xd * 2, emb_dim)
-        self.drug1_bn3 = nn.BatchNorm1d(emb_dim)
-        self.drug1_conv4 = GCNConv(num_features_xd * 2, num_features_xd * 2)
-        self.drug1_bn4 = nn.BatchNorm1d(num_features_xd * 2)
-        self.drug1_conv5 = GCNConv(num_features_xd * 2, emb_dim)
-        self.drug1_bn5 = nn.BatchNorm1d(emb_dim)
 
-        # graph drug layers
-        self.drug2_conv1 = GCNConv(num_features_xd, num_features_xd)
-        self.drug2_bn1 = nn.BatchNorm1d(num_features_xd)
-        self.drug2_conv2 = GCNConv(num_features_xd, num_features_xd * 2)
-        self.drug2_bn2 = nn.BatchNorm1d(num_features_xd * 2)
-        self.drug2_conv3 = GCNConv(num_features_xd * 2, emb_dim)
-        self.drug2_bn3 = nn.BatchNorm1d(emb_dim)
-        self.drug2_conv4 = GCNConv(num_features_xd * 2, num_features_xd * 2)
-        self.drug2_bn4 = nn.BatchNorm1d(num_features_xd * 2)
-        self.drug2_conv5 = GCNConv(num_features_xd * 2, emb_dim)
-        self.drug2_bn5 = nn.BatchNorm1d(emb_dim)
+        # Define the graph convolution layers for drug1
+        self.drug1_gcn = GraphConvLayer(num_features_xd, emb_dim, dropout)
+        # Define the graph convolution layers for drug2
+        self.drug2_gcn = GraphConvLayer(num_features_xd, emb_dim, dropout)
+        self.drug3_gcn = GraphConvLayer(num_features_xd, emb_dim, dropout)
+        # Define the graph convolution layers for drug2
+        self.drug4_gcn = GraphConvLayer(num_features_xd, emb_dim, dropout)
+        self.drug5_gcn = GraphConvLayer(num_features_xd, emb_dim, dropout)
 
-        # graph drug layers
+        self.feat_lin1 = nn.Linear(emb_dim, emb_dim)
+        self.feat_lin2 = nn.Linear(emb_dim, emb_dim)
+        self.feat_lin3 = nn.Linear(emb_dim, emb_dim)
+        self.feat_lin4 = nn.Linear(emb_dim, emb_dim)
+        self.feat_lin5 = nn.Linear(emb_dim, emb_dim)
+
         self.out_lin1 = nn.Sequential(
             nn.Linear(emb_dim, output_dim),
             nn.ReLU(inplace=True),
             nn.Linear(output_dim, output_dim)
         )
-        self.feat_lin1 = nn.Linear(emb_dim, emb_dim)
-        self.feat_lin2 = nn.Linear(emb_dim, emb_dim)
         self.out_lin2 = nn.Sequential(
             nn.Linear(emb_dim, output_dim),
             nn.ReLU(inplace=True),
             nn.Linear(output_dim, output_dim)
         )
-
-        # activation and regularization
+        self.out_lin3 = nn.Sequential(
+            nn.Linear(emb_dim, output_dim),
+            nn.ReLU(inplace=True),
+            nn.Linear(output_dim, output_dim)
+        )
+        self.out_lin4 = nn.Sequential(
+            nn.Linear(emb_dim, output_dim),
+            nn.ReLU(inplace=True),
+            nn.Linear(output_dim, output_dim)
+        )
+        self.out_lin5 = nn.Sequential(
+            nn.Linear(emb_dim, output_dim),
+            nn.ReLU(inplace=True),
+            nn.Linear(output_dim, output_dim)
+        )
         self.relu = nn.ReLU()
         self.dropout = nn.Dropout(dropout)
-
-    def forward(self, data1, data2, data3, data4):
+    def load_my_state_dict(self, state_dict):
+        own_state = self.state_dict()
+        for name, param in state_dict.items():
+            if name not in own_state:
+                continue
+            if isinstance(param, nn.parameter.Parameter):
+                # backwards compatibility for serialized parameters
+                param = param.data
+            own_state[name].copy_(param)
+    def forward(self, data1, data2, data3, data4, data5, data6, data7, data8, data9, data10):
+        # 0-2
         x1, edge_index1, batch1 = data1.x, data1.edge_index, data1.batch
         x2, edge_index2, batch2 = data2.x, data2.edge_index, data2.batch
+        # 2-4
         x3, edge_index3, batch3 = data3.x, data3.edge_index, data3.batch
         x4, edge_index4, batch4 = data4.x, data4.edge_index, data4.batch
-        # deal drug1
+        # 4-6
+        x5, edge_index5, batch5 = data5.x, data5.edge_index, data5.batch
+        x6, edge_index6, batch6 = data6.x, data6.edge_index, data6.batch
+        # 6-8
+        x7, edge_index7, batch7 = data7.x, data7.edge_index, data7.batch
+        x8, edge_index8, batch8 = data8.x, data8.edge_index, data8.batch
+        # 8
+        x9, edge_index9, batch9 = data9.x, data9.edge_index, data9.batch
+        x10, edge_index10, batch10 = data10.x, data10.edge_index, data10.batch
+        # Apply graph convolution layers to drug1 and drug2
+        x1 = self.drug1_gcn(x1, edge_index1)
+        x2 = self.drug1_gcn(x2, edge_index2)
 
-        x1 = self.drug1_conv1(x1, edge_index1)
-        x1 = self.drug1_bn1(x1)
-        x1 = F.elu(x1)
-        x1 = self.dropout(x1)
-        x1 = self.drug1_conv2(x1, edge_index1)
+        x3 = self.drug2_gcn(x3, edge_index3)
+        x4 = self.drug2_gcn(x4, edge_index4)
 
-        x1 = self.drug1_bn2(x1)
-        x1 = F.elu(x1)
-        x1 = self.dropout(x1)
-        x1 = self.drug1_conv3(x1, edge_index1)
-        x1 = self.drug1_bn3(x1)
+        x5 = self.drug3_gcn(x5, edge_index5)
+        x6 = self.drug3_gcn(x6, edge_index6)
 
-        x1 = gmp(x1, batch1)         # global max pooling
+        x7 = self.drug4_gcn(x7, edge_index7)
+        x8 = self.drug4_gcn(x8, edge_index8)
 
-        x2 = self.drug1_conv1(x2, edge_index2)
-        x2 = self.drug1_bn1(x2)
-        x2 = F.elu(x2)
-        x2 = self.dropout(x2)
-        x2 = self.drug1_conv2(x2, edge_index2)
-        x2 = self.drug1_bn2(x2)
-        x2 = F.elu(x2)
-        x2 = self.dropout(x2)
-        x2 = self.drug1_conv3(x2, edge_index2)
-        x2 = self.drug1_bn3(x2)
+        x9 = self.drug5_gcn(x9, edge_index9)
+        x10 = self.drug5_gcn(x10, edge_index10)
 
-        x2 = gmp(x2, batch2)         # global max pooling
-
-        x3 = self.drug2_conv1(x3, edge_index3)
-        x3 = self.drug2_bn1(x3)
-        x3 = F.elu(x3)
-        x3 = self.dropout(x3)
-        x3 = self.drug2_conv2(x3, edge_index3)
-        x3 = self.drug2_bn2(x3)
-        x3 = F.elu(x3)
-        x3 = self.dropout(x3)
-        x3 = self.drug2_conv3(x3, edge_index3)
-        x3 = self.drug2_bn3(x3)
-
-        x3 = gmp(x3, batch3)    # global max pooling
-
-        x4 = self.drug2_conv1(x4, edge_index4)
-        x4 = self.drug2_bn1(x4)
-        x4 = F.elu(x4)
-        x4 = self.dropout(x4)
-        x4 = self.drug2_conv2(x4, edge_index4)
-        x4 = self.drug2_bn2(x4)
-        x4 = F.elu(x4)
-        x4 = self.dropout(x4)
-        x4 = self.drug2_conv3(x4, edge_index4)
-        x4 = self.drug2_bn3(x4)
-
-        x4 = gmp(x4, batch4)         # global max pooling
+        x1 = gmp(x1, batch1)
+        x2 = gmp(x2, batch2)
+        x3 = gmp(x3, batch3)
+        x4 = gmp(x4, batch4)
+        x5 = gmp(x5, batch5)
+        x6 = gmp(x6, batch6)
+        x7 = gmp(x7, batch7)
+        x8 = gmp(x8, batch8)
+        x9 = gmp(x9, batch9)
+        x10 = gmp(x10, batch10)
 
         x1 = self.feat_lin1(x1)
         x2 = self.feat_lin1(x2)
-
         x3 = self.feat_lin2(x3)
         x4 = self.feat_lin2(x4)
+        x5 = self.feat_lin3(x5)
+        x6 = self.feat_lin3(x6)
+        x7 = self.feat_lin4(x7)
+        x8 = self.feat_lin4(x8)
+        x9 = self.feat_lin5(x9)
+        x10 = self.feat_lin5(x10)
 
         out1 = self.out_lin1(x1)
         out2 = self.out_lin1(x2)
 
         out3 = self.out_lin2(x3)
         out4 = self.out_lin2(x4)
-        return out1, out2, out3, out4
+
+        out5 = self.out_lin3(x5)
+        out6 = self.out_lin3(x6)
+
+        out7 = self.out_lin4(x7)
+        out8 = self.out_lin4(x8)
+
+        out9 = self.out_lin5(x9)
+        out10 = self.out_lin5(x10)
+
+        return out1, out2, out3, out4, out5, out6, out7, out8, out9, out10
