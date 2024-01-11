@@ -1,0 +1,397 @@
+import os
+import shutil
+import sys
+import yaml
+import numpy as np
+import pandas as pd
+from datetime import datetime
+import torch
+from gat_finetune2 import GATNet
+# from only_one_encode_finetune import GCNNet
+from five_connect import GCNNet
+from torch_geometric.loader import DataLoader
+# from finetune_dataset2 import load_data
+from torch import nn
+import torch.nn.functional as F
+from sklearn.metrics import roc_auc_score, f1_score, average_precision_score
+from torch.utils.tensorboard import SummaryWriter
+from net_xent import NTXentLoss
+from EBM_dot_prod import ebm_dot_prod
+from torch.optim.lr_scheduler import CosineAnnealingLR
+from process_dataset import TestbedDataset
+
+
+def _save_config_file(model_checkpoints_folder):
+    if not os.path.exists(model_checkpoints_folder):
+        os.makedirs(model_checkpoints_folder)
+        shutil.copy('./config_finetune.yaml', os.path.join(model_checkpoints_folder, 'config_finetune.yaml'))
+
+
+class FineTune(object):
+    def __init__(self, dataset, config):
+        self.config = config
+        self.device = self._get_device()
+        self.dataset = dataset
+
+        current_time = datetime.now().strftime('%b%d_%H-%M-%S')
+        dir_name = current_time + '_' + config['task_name'] + '_' + 'classification'
+
+        log_dir = os.path.join('finetune', dir_name)
+        self.writer = SummaryWriter(log_dir=log_dir)
+        self.criterion = nn.CrossEntropyLoss()
+        self.nt_xent_criterion = NTXentLoss(self.device, config['batch_size'], **config['loss'])
+        self.ebm_dot_prod = ebm_dot_prod(self.device, config['batch_size'])
+        # self.ebm_dot_prod = EBM_dot_prod()
+
+    def _get_device(self):
+        if torch.cuda.is_available() and self.config['gpu'] != 'cpu':
+            device = self.config['gpu']
+            torch.cuda.set_device(device)
+        else:
+            device = 'cpu'
+        print("Running on:", device)
+
+        return device
+
+    def _step(self, model, data, n_iter):
+        drugs1_index = np.tile(np.array(data[0].drug), 2)
+        data[0].to(self.device)
+        data[1].to(self.device)
+        data[2].to(self.device)
+        data[3].to(self.device)
+        data[4].to(self.device)
+        data[5].to(self.device)
+        data[6].to(self.device)
+        data[7].to(self.device)
+        data[8].to(self.device)
+        data[9].to(self.device)
+        h, h2, h3, h4, pred = model(data[0], data[1], data[2], data[3],data[4], data[5], data[6], data[7],data[8], data[9])
+        # pred_a = torch.cat((h, h3), dim=1)
+        # h = F.normalize(h, dim=1)
+        # h2 = F.normalize(h2, dim=1)
+        # h3 = F.normalize(h3, dim=1)
+        # h4 = F.normalize(h4, dim=1)
+        # loss = self.config['a'] * self.criterion(pred, data[0].y.flatten()) + self.config['b'] * self.nt_xent_criterion(
+        #     h, h2, drugs1_index)
+
+        loss = self.config['a'] * self.criterion(pred, data[0].y.flatten())
+        return pred, loss
+
+    def _step2(self, model, data, n_iter):
+        drugs1_index = np.tile(np.array(data[0].drug), 2)
+        data[0].to(self.device)
+        data[1].to(self.device)
+        data[2].to(self.device)
+        data[3].to(self.device)
+        data[4].to(self.device)
+        data[5].to(self.device)
+        data[6].to(self.device)
+        data[7].to(self.device)
+        data[8].to(self.device)
+        data[9].to(self.device)
+        h, h2, h3, h4, pred = model(data[0], data[1], data[2], data[3],data[4], data[5], data[6], data[7],data[8], data[9])
+        # pred_a = torch.cat((h, h3), dim=1)
+        # h = F.normalize(h, dim=1)
+        # h2 = F.normalize(h2, dim=1)
+        # h3 = F.normalize(h3, dim=1)
+        # h4 = F.normalize(h4, dim=1)
+        # loss = self.config['a'] * self.criterion(pred, data[0].y.flatten()) + self.config['b'] * self.nt_xent_criterion(
+        #     h, h2, drugs1_index)
+
+        loss = self.config['a'] * self.criterion(pred, data[0].y.flatten())
+        return pred, h4
+    def train(self):
+        loader_train1, loader_train2, loader_train3, loader_train4, loader_train5, loader_train6, loader_train7, \
+            loader_train8, loader_train9, loader_train10, loader_valid1, loader_valid2, loader_valid3, loader_valid4, \
+            loader_valid5, loader_valid6, loader_valid7, loader_valid8, loader_valid9, loader_valid10, loader_test1, \
+            loader_test2, loader_test3, loader_test4, loader_test5, loader_test6, loader_test7, loader_test8,\
+            loader_test9, loader_test10 = self.dataset
+        # contrastiveLoss=ContrastiveLoss(batch_size=config["batch_size"],device='cuda',temperature=0.5).to(self.device)
+        model = GCNNet().to(self.device)
+        model = self._load_pre_trained_weights(model)
+
+        layer_list = []
+        for name, param in model.named_parameters():
+            if 'pred_head' in name:
+                print(name, param.requires_grad)
+                layer_list.append(name)
+
+        # 判断网络层是否再layer_list中
+        params = list(map(lambda x: x[1], list(filter(lambda kv: kv[0] in layer_list, model.named_parameters()))))
+        base_params = list(
+            map(lambda x: x[1], list(filter(lambda kv: kv[0] not in layer_list, model.named_parameters()))))
+        optimizer = torch.optim.Adam(
+            [{'params': base_params, 'lr': self.config['init_base_lr']}, {'params': params}],
+            self.config['init_lr'], weight_decay=eval(self.config['weight_decay'])
+        )
+        # 定义优化函数
+        # optimizer = torch.optim.Adam(
+        #     model.parameters(), self.config['init_lr'],
+        #     weight_decay=eval(self.config['weight_decay'])
+        # )
+
+        # 余弦退火策略
+        scheduler = CosineAnnealingLR(
+            optimizer, T_max=self.config['epochs'] - self.config['warm_up'],
+            eta_min=0, last_epoch=-1
+        )
+        model_checkpoints_folder = os.path.join(self.writer.log_dir, 'checkpoints')
+        _save_config_file(model_checkpoints_folder)
+
+        n_iter = 0
+        valid_n_iter = 0
+        best_valid_loss = np.inf
+        best_valid_rgr = np.inf
+        best_valid_cls = 0
+
+        for epoch_counter in range(self.config['epochs']):
+            for bn, data in enumerate(zip(loader_train1, loader_train2, loader_train3, loader_train4, loader_train5,
+                                          loader_train6, loader_train7, loader_train8, loader_train9, loader_train10)):
+                optimizer.zero_grad()
+
+                pred, loss = self._step(model, data, n_iter)
+
+                if n_iter % self.config['log_every_n_steps'] == 0:
+                    # 每5步输出一次loss
+                    self.writer.add_scalar('train_loss', loss, global_step=n_iter)
+                    print(epoch_counter, bn, loss.item())
+                loss.backward()
+
+                optimizer.step()
+                n_iter += 1
+            # validate the model if requested
+            if epoch_counter % self.config['eval_every_n_epochs'] == 0:
+
+                valid_loss, valid_cls = self._validate(model, loader_valid1, loader_valid2, loader_valid3, loader_valid4
+                                                       , loader_valid5, loader_valid6, loader_valid7, loader_valid8, loader_valid9, loader_valid10)
+                if valid_cls > best_valid_cls:
+                    # save the model weights
+                    best_valid_cls = valid_cls
+                    torch.save(model.state_dict(), os.path.join(model_checkpoints_folder, 'model.pth'))
+
+                self.writer.add_scalar('validation_loss', valid_loss, global_step=valid_n_iter)
+                valid_n_iter += 1
+            if epoch_counter >= self.config['warm_up']:
+                scheduler.step()
+
+        self._test(model, loader_test1, loader_test2, loader_test3, loader_test4, loader_test5, loader_test6,
+                   loader_test7, loader_test8, loader_test9, loader_test10)
+
+    def _validate(self, model,loader_valid1, loader_valid2, loader_valid3, loader_valid4,
+                  loader_valid5, loader_valid6, loader_valid7, loader_valid8, loader_valid9, loader_valid10):
+        predictions = []
+        labels = []
+        with torch.no_grad():
+            model.eval()
+
+            valid_loss = 0.0
+            num_data = 0
+            for bn, data in enumerate(zip(loader_valid1, loader_valid2, loader_valid3, loader_valid4, loader_valid5,
+                                          loader_valid6, loader_valid7, loader_valid8, loader_valid9, loader_valid10)):
+
+                # h, h2, h3, h4, pred = model(data[0], data[1], data[2], data[3])
+                pred, loss = self._step(model, data, bn)
+
+                valid_loss += loss.item() * data[0].y.size(0)
+                num_data += data[0].y.size(0)
+
+                # if self.normalizer:
+                # pred = self.normalizer.denorm(pred)
+
+                pred = F.softmax(pred, dim=-1)
+
+                if self.device == 'cpu':
+                    predictions.extend(pred.detach().numpy())
+                    labels.extend(data[0].y.flatten().numpy())
+                else:
+                    predictions.extend(pred.cpu().detach().numpy())
+                    labels.extend(data[0].y.cpu().flatten().numpy())
+
+            valid_loss /= num_data
+
+        model.train()
+
+        predictions = np.array(predictions)
+        labels = np.array(labels)
+        roc_auc = roc_auc_score(labels, predictions[:, 1])
+        print('Validation loss:', valid_loss, 'ROC AUC:', roc_auc)
+        return valid_loss, roc_auc
+
+    # Apr26_01 - 53 - 23 / model_289.pth
+    def _load_pre_trained_weights(self, model):
+        pretrain = str(self.config['pretrain_model'])
+        try:
+            checkpoints_folder = os.path.join('./ckpt', pretrain, 'checkpoints')
+            state_dict = torch.load(os.path.join(checkpoints_folder, 'model.pth'), map_location=self.device)
+            # model.load_state_dict(state_dict)
+            model.load_my_state_dict(state_dict)
+            print("Loaded pre-trained model with success.")
+        except FileNotFoundError:
+            print("Pre-trained weights not found. Training from scratch.")
+
+        return model
+
+    def _test(self, model,loader_test1, loader_test2, loader_test3, loader_test4, loader_test5, loader_test6,
+              loader_test7, loader_test8, loader_test9, loader_test10):
+        model_path = os.path.join(self.writer.log_dir, 'checkpoints', 'model.pth')
+        # model_path = "finetune\Dec27_14-22-01_BIOSNAP_classification\checkpoints\model.pth"
+        print("model_path:", model_path)
+        state_dict = torch.load(model_path, map_location=self.device)
+        model.load_state_dict(state_dict)
+        print("Loaded trained model with success.")
+        total_out_features = torch.Tensor()
+        # test steps
+        predictions = []
+        labels = []
+        with torch.no_grad():
+            model.eval()
+
+            test_loss = 0.0
+            num_data = 0
+            for bn, data in enumerate(zip(loader_test1, loader_test2, loader_test3, loader_test4, loader_test5,
+                                          loader_test6, loader_test7, loader_test8, loader_test9, loader_test10)):
+
+                # h, h2, h3, h4, pred  = model(data[0],data[1],data[2],data[3])
+                pred, feature = self._step2(model, data, bn)
+                feature = torch.cat([data[0].y.view(-1, 1).long().cpu(), feature.cpu() ], dim=1) # 第一个维度放标签
+                # test_loss += loss.item() * data[0].y.size(0)
+                num_data += data[0].y.size(0)
+                total_out_features = torch.cat((total_out_features, feature), 0)
+                # if self.normalizer:
+                # pred = self.normalizer.denorm(pred)
+
+                pred = F.softmax(pred, dim=-1)
+
+                if self.device == 'cpu':
+                    predictions.extend(pred.detach().numpy())
+                    labels.extend(data[0].y.flatten().numpy())
+                else:
+                    predictions.extend(pred.cpu().detach().numpy())
+                    labels.extend(data[0].y.cpu().flatten().numpy())
+
+            test_loss /= num_data
+
+        model.train()
+
+        predictions = np.array(predictions)
+        labels = np.array(labels)
+        self.roc_auc = roc_auc_score(labels, predictions[:, 1])
+        self.aupr = average_precision_score(labels, predictions[:, 1])
+        predicted_labels = np.argmax(predictions, axis=1)
+        self.f1_score = f1_score(labels, predicted_labels)
+        # np.savetxt('./bio_snap_features.txt', total_out_features.numpy())
+        print('Test loss:', test_loss, 'Test ROC AUC:', self.roc_auc, "Test AUPR:", self.aupr, "Test F1:",
+              self.f1_score)
+
+
+def main(config, ratio):
+    # dataset = load_data(ratio)
+    # print(dataset)
+    root_path = './Dataset/data'
+    # datafile = "AdverseDDI_"
+    datafile = "Biosnap_"
+    if con == 4:
+        datacon = "_2_4"
+    elif con == 6:
+        datacon = "_4_6"
+    elif con == 8:
+        datacon = "_6_8"
+    elif con == 2:
+        datacon = "_0_2"
+    else:
+        datacon = "_10"
+    # A_B train1：A,0-2  train2：B,0-2    train3：A,4-6  train4：B,4-6
+    train1 = TestbedDataset(root=root_path, dataset=datafile + 'train1_0_2')
+    train2 = TestbedDataset(root=root_path, dataset=datafile + 'train2_0_2')
+
+    train3 = TestbedDataset(root=root_path, dataset=datafile + 'train1'+'_2_4')
+    train4 = TestbedDataset(root=root_path, dataset=datafile + 'train2'+'_2_4')
+
+    train5 = TestbedDataset(root=root_path, dataset=datafile + 'train1' + '_4_6')
+    train6 = TestbedDataset(root=root_path, dataset=datafile + 'train2' + '_4_6')
+
+    train7 = TestbedDataset(root=root_path, dataset=datafile + 'train1' + '_6_8')
+    train8 = TestbedDataset(root=root_path, dataset=datafile + 'train2' + '_6_8')
+
+    train9 = TestbedDataset(root=root_path, dataset=datafile + 'train1' + '_10')
+    train10 = TestbedDataset(root=root_path, dataset=datafile + 'train2' + '_10')
+
+    loader_train1 = DataLoader(train1, batch_size=config["batch_size"], shuffle=False, drop_last=True)
+    loader_train2 = DataLoader(train2, batch_size=config["batch_size"], shuffle=False, drop_last=True)
+    loader_train3 = DataLoader(train3, batch_size=config["batch_size"], shuffle=False, drop_last=True)
+    loader_train4 = DataLoader(train4, batch_size=config["batch_size"], shuffle=False, drop_last=True)
+    loader_train5 = DataLoader(train5, batch_size=config["batch_size"], shuffle=False, drop_last=True)
+    loader_train6 = DataLoader(train6, batch_size=config["batch_size"], shuffle=False, drop_last=True)
+    loader_train7 = DataLoader(train7, batch_size=config["batch_size"], shuffle=False, drop_last=True)
+    loader_train8 = DataLoader(train8, batch_size=config["batch_size"], shuffle=False, drop_last=True)
+    loader_train9 = DataLoader(train9, batch_size=config["batch_size"], shuffle=False, drop_last=True)
+    loader_train10 = DataLoader(train10, batch_size=config["batch_size"], shuffle=False, drop_last=True)
+
+    valid1 = TestbedDataset(root=root_path, dataset=datafile + 'valid1_0_2')
+    valid2 = TestbedDataset(root=root_path, dataset=datafile + 'valid2_0_2')
+
+    valid3 = TestbedDataset(root=root_path, dataset=datafile + 'valid1'+'_2_4')
+    valid4 = TestbedDataset(root=root_path, dataset=datafile + 'valid2'+'_2_4')
+
+    valid5 = TestbedDataset(root=root_path, dataset=datafile + 'valid1'+'_4_6')
+    valid6 = TestbedDataset(root=root_path, dataset=datafile + 'valid2'+'_4_6')
+
+    valid7 = TestbedDataset(root=root_path, dataset=datafile + 'valid1'+'_6_8')
+    valid8 = TestbedDataset(root=root_path, dataset=datafile + 'valid2'+'_6_8')
+
+    valid9 = TestbedDataset(root=root_path, dataset=datafile + 'valid1'+'_10')
+    valid10 = TestbedDataset(root=root_path, dataset=datafile + 'valid2'+'_10')
+
+    loader_valid1 = DataLoader(valid1, batch_size=config["batch_size"], shuffle=False, drop_last=True)
+    loader_valid2 = DataLoader(valid2, batch_size=config["batch_size"], shuffle=False, drop_last=True)
+    loader_valid3 = DataLoader(valid3, batch_size=config["batch_size"], shuffle=False, drop_last=True)
+    loader_valid4 = DataLoader(valid4, batch_size=config["batch_size"], shuffle=False, drop_last=True)
+    loader_valid5 = DataLoader(valid5, batch_size=config["batch_size"], shuffle=False, drop_last=True)
+    loader_valid6 = DataLoader(valid6, batch_size=config["batch_size"], shuffle=False, drop_last=True)
+    loader_valid7 = DataLoader(valid7, batch_size=config["batch_size"], shuffle=False, drop_last=True)
+    loader_valid8 = DataLoader(valid8, batch_size=config["batch_size"], shuffle=False, drop_last=True)
+    loader_valid9 = DataLoader(valid9, batch_size=config["batch_size"], shuffle=False, drop_last=True)
+    loader_valid10 = DataLoader(valid10, batch_size=config["batch_size"], shuffle=False, drop_last=True)
+
+    test1 = TestbedDataset(root=root_path, dataset=datafile + 'test1_0_2')
+    test2 = TestbedDataset(root=root_path, dataset=datafile + 'test2_0_2')
+
+    test3 = TestbedDataset(root=root_path, dataset=datafile + 'test1'+'_2_4')
+    test4 = TestbedDataset(root=root_path, dataset=datafile + 'test2'+'_2_4')
+
+    test5 = TestbedDataset(root=root_path, dataset=datafile + 'test1'+'_4_6')
+    test6 = TestbedDataset(root=root_path, dataset=datafile + 'test2'+'_4_6')
+
+    test7 = TestbedDataset(root=root_path, dataset=datafile + 'test1'+'_6_8')
+    test8 = TestbedDataset(root=root_path, dataset=datafile + 'test2'+'_6_8')
+
+    test9 = TestbedDataset(root=root_path, dataset=datafile + 'test1'+'_10')
+    test10 = TestbedDataset(root=root_path, dataset=datafile + 'test2'+'_10')
+
+    loader_test1 = DataLoader(test1, batch_size=config["batch_size"], shuffle=False, drop_last=True)
+    loader_test2 = DataLoader(test2, batch_size=config["batch_size"], shuffle=False, drop_last=True)
+    loader_test3 = DataLoader(test3, batch_size=config["batch_size"], shuffle=False, drop_last=True)
+    loader_test4 = DataLoader(test4, batch_size=config["batch_size"], shuffle=False, drop_last=True)
+    loader_test5 = DataLoader(test5, batch_size=config["batch_size"], shuffle=False, drop_last=True)
+    loader_test6 = DataLoader(test6, batch_size=config["batch_size"], shuffle=False, drop_last=True)
+    loader_test7 = DataLoader(test7, batch_size=config["batch_size"], shuffle=False, drop_last=True)
+    loader_test8 = DataLoader(test8, batch_size=config["batch_size"], shuffle=False, drop_last=True)
+    loader_test9 = DataLoader(test9, batch_size=config["batch_size"], shuffle=False, drop_last=True)
+    loader_test10 = DataLoader(test10, batch_size=config["batch_size"], shuffle=False, drop_last=True)
+
+    dataset = (loader_train1, loader_train2, loader_train3, loader_train4, loader_train5, loader_train6, loader_train7, loader_train8, loader_train9, loader_train10,
+               loader_valid1, loader_valid2, loader_valid3, loader_valid4, loader_valid5, loader_valid6, loader_valid7, loader_valid8, loader_valid9, loader_valid10,
+               loader_test1, loader_test2, loader_test3, loader_test4, loader_test5, loader_test6, loader_test7, loader_test8, loader_test9, loader_test10)
+    fine_tune = FineTune(dataset, config)
+    fine_tune.train()
+    return fine_tune.roc_auc
+#
+
+if __name__ == "__main__":
+    ratio = 0
+    cons = [0]
+    for i in range(2):
+        for con in cons:
+            config = yaml.load(open("config_finetune.yaml", "r"), Loader=yaml.FullLoader)
+            result = main(config, con)
+            print("------", con, "-----")
