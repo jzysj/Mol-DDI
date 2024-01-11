@@ -1,0 +1,328 @@
+import os
+from copy import deepcopy
+import networkx as nx
+import numpy as np
+import torch
+import torch.nn.functional as F
+# from torch.utils.data import Dataset, DataLoader
+from torch.utils.data.sampler import SubsetRandomSampler
+import math
+import random
+from torch_scatter import scatter
+from torch_geometric.data import Data, Dataset
+from torch_geometric.loader import DataLoader
+
+
+def calculate_coor(lin):
+    arrLin = lin.strip().split(" ")
+    flag = 1
+    for j in range(len(arrLin)):
+        if arrLin[j] != "" and flag == 1:
+            x = arrLin[j]
+            flag = flag + 1
+        # print("x有值了：",x)
+        elif arrLin[j] != "" and flag == 2:
+            y = arrLin[j]
+            flag = flag + 1
+        # print("y有值了：",y)
+        elif arrLin[j] != "" and flag == 3:
+            z = arrLin[j]
+            flag = flag + 1
+        elif arrLin[j] != "" and flag == 4:
+            atom = arrLin[j]
+            flag = 0
+
+        # print("z有值了：",z)
+        # print(x + "\t" + y + "\t" + z + "\t" + atom)
+    return x, y, z, atom
+
+#  数据读入字典中，
+def read_name(data_path):
+    name_data = []
+    data_info = {}
+    sample_atom = []
+    sample_xyz = []
+    i = 0
+    file_read = open(data_path, "r")
+    for line in file_read:
+        if "ZINC" in line:
+            data_line = line.strip("\n")
+            if data_line not in name_data:
+                name_data.append(data_line)
+                data_info[data_line] = {}
+                matrix = sqrt(sample_xyz)  #
+                #
+                new_adj1 = np.where((matrix <= 0) | (matrix >= 2), 0, matrix)
+                features1 = torch.Tensor(Calculate_feature(new_adj1, sample_atom))
+
+                # new_adj2 = np.where((matrix < 2) | (matrix >= 4), 0, matrix)
+                # features2 = torch.Tensor(Calculate_feature(new_adj2, sample_atom))
+                #
+                new_adj3 = np.where((matrix < 4) | (matrix >= 6), 0, matrix)
+                features3 = torch.Tensor(Calculate_feature(new_adj3, sample_atom))
+                #
+                # new_adj4 = np.where((matrix < 6) | (matrix >= 8), 0, matrix)
+                # features4 = torch.Tensor(Calculate_feature(new_adj4, sample_atom))
+                #
+                # new_adj5 = np.where(matrix <= 8, 0, matrix)
+                # features5 = torch.Tensor(Calculate_feature(new_adj5, sample_atom))
+
+                # seq = [4]
+                # sample_constive = np.random.choice(seq, 1, replace=False)  # 随机形成两个对比视图
+                # 生成不同视图的邻接矩阵
+                adj1 = torch.LongTensor(np.asarray(np.where((matrix > 0) & (matrix < 2))))
+                # adj2 = torch.LongTensor(np.asarray(np.where((matrix >= 2) & (matrix < 4))))
+                adj3 = torch.LongTensor(np.asarray(np.where((matrix >= 4) & (matrix < 6))))
+                # adj4 = torch.LongTensor(np.asarray(np.where((matrix >= 6) & (matrix < 8))))
+                adj5 = torch.LongTensor(
+                        np.array(np.where((matrix >= 8))))
+
+                data_info[data_line]["feature1"] = features1
+                data_info[data_line]["feature3"] = features3
+
+
+                data_info[data_line]["matrix1"] = adj1
+                # data_info[data_line]["matrix2"] = adj2
+                data_info[data_line]["matrix3"] = adj3
+                # data_info[data_line]["matrix4"] = adj4
+                # data_info[data_line]["matrix5"] = adj5
+                sample_atom = []
+                sample_xyz = []
+                if len(data_info) == 100000:  # 读取定量的数据预训练
+                    print(len(data_info))
+                    # file = open("./dict.txt","w")
+                    # for k,v in data_info.items():
+                    #     file.write(str(k)+" "+str(v)+"\n")
+
+                    return name_data, data_info
+        else:
+            data_line = line.strip("\n").split()  # 去除首尾换行符，并按空格划分
+
+            sample_atom.append(data_line[0])
+            sample_xyz.append(data_line[1:])
+
+
+# 将三位位置转化为位置矩阵
+# def sqrt_xyz(matrix):
+#     matrix = np.array(matrix).astype(float)
+#     m, n = matrix.shape
+#     adj = np.sqrt(np.tile(np.sum(np.square(matrix), axis=1), (m, 1))+np.tile(np.sum(np.square(matrix),axis=1),(m,1)).transpose()-np.matmul(matrix,matrix.transpose())*2)
+#     return adj
+
+
+def sqrt(drug_adj):
+    mat = np.zeros((len(drug_adj), len(drug_adj)), dtype=float)
+    adj = np.array(drug_adj).astype(float)
+    for i in range(len(drug_adj)):
+        for j in range(len(drug_adj)):
+            mat[i][j] = np.sqrt(np.sum(np.square(adj[i]-adj[j])))
+    return mat
+
+
+# 计算分子的初始特征
+def Calculate_feature(dis_mat, all_atoms):
+    Feat_mat = np.zeros((len(all_atoms), 62), dtype=float)
+    for a in range(len(dis_mat[0, :])):
+        for b in range(len(dis_mat[:, 0])):
+            if dis_mat[a][b] == 0:
+                continue
+            if all_atoms[b] == 'C':
+                if dis_mat[a][b] >= 10:
+                    Feat_mat[a, 18] += 1
+                else:
+                    # print(dis_mat[a,b])
+                    Feat_mat[a, int((dis_mat[a, b]-1)*2)] += 1
+            elif all_atoms[b] == 'H':
+                if dis_mat[a][b] >= 10:
+                    Feat_mat[a, 37] += 1
+                else:
+                    Feat_mat[a, 19+int((dis_mat[a,b]-1)*2)] += 1
+            elif all_atoms[b] == 'O':
+                if dis_mat[a][b] < 2.5:
+                    Feat_mat[a, 38] += 1
+                elif dis_mat[a][b] < 5:
+                    Feat_mat[a, 39] += 1
+                elif dis_mat[a][b] < 7.5:
+                    Feat_mat[a, 40] += 1
+                else:
+                    Feat_mat[a, 41] += 1
+            elif all_atoms[b] == 'N':
+                if dis_mat[a][b] <= 2.5:
+                    Feat_mat[a, 42] += 1
+                elif dis_mat[a][b] < 5:
+                    Feat_mat[a, 43] += 1
+                elif dis_mat[a][b] < 7.5:
+                    Feat_mat[a, 44] += 1
+                else:
+                    Feat_mat[a, 45] += 1
+            elif all_atoms[b] == 'P':
+                if dis_mat[a][b] < 5:
+                    Feat_mat[a, 46] += 1
+                else:
+                    Feat_mat[a, 47] += 1
+            elif all_atoms[b] == 'Cl' or all_atoms[a] == 'CL':
+                if dis_mat[a][b] < 5:
+                    Feat_mat[a, 48] += 1
+                else:
+                    Feat_mat[a, 49] += 1
+            elif all_atoms[b] == 'F':
+                if dis_mat[a][b] < 5:
+                    Feat_mat[a, 50] += 1
+                else:
+                    Feat_mat[a, 51] += 1
+            elif all_atoms[b] == 'Br':
+                if dis_mat[a][b] < 5:
+                    Feat_mat[a, 52] += 1
+                else:
+                    Feat_mat[a, 53] += 1
+            elif all_atoms[b] == 'S':
+                if dis_mat[a][b] < 5:
+                    Feat_mat[a, 54] += 1
+                else:
+                    Feat_mat[a, 55] += 1
+            elif all_atoms[b] == 'Si':
+                if dis_mat[a][b] < 5:
+                    Feat_mat[a, 56] += 1
+                else:
+                    Feat_mat[a, 57] += 1
+            elif all_atoms[b] == 'I':
+                if dis_mat[a][b] < 5:
+                    Feat_mat[a, 58] += 1
+                else:
+                    Feat_mat[a, 59] += 1
+            else:
+                if dis_mat[a][b] < 5:
+                    Feat_mat[a, 60] += 1
+                else:
+                    Feat_mat[a, 61] += 1
+    return Feat_mat
+
+
+# 定义加载数据类
+class MoleculeDataset(Dataset):
+    def __init__(self, data_path):
+        super(Dataset, self).__init__()
+
+        self.name_data, self.data_info = read_name(data_path)  # 读取文件流
+
+    def random_mask(self, x, adj):
+        N = len(x)
+        g = nx.Graph()
+        g.add_nodes_from(range(N))
+        g.add_edges_from(adj.T.tolist())
+        M = len(g.edges())
+        num_mask_nodes = max([1, math.floor(0.25*N)])
+        num_mask_edges = max([0, math.floor(0.25*M)])
+        mask_nodes_i = random.sample(list(range(N)), num_mask_nodes)
+        mask_edges_i = random.sample(list(g.edges()), num_mask_edges)
+        x_i = deepcopy(x)
+        ones_tensor = torch.ones(62).view(1, 62)
+        x_i[mask_nodes_i, :] = ones_tensor
+        g.remove_edges_from(mask_edges_i)
+        g = g.to_directed()
+        edges = list(g.edges())
+        mask_edges_i = torch.tensor(edges, dtype=torch.long).t()
+        return x_i, mask_edges_i
+
+    def __getitem__(self, index):
+        drug_name = self.name_data[index]  # 读取药物名称
+        # 生成药物的位置矩阵
+        x_features = self.data_info[drug_name]["feature1"]
+        y_features = self.data_info[drug_name]["feature3"]
+        # print(drug_atoms)
+        adj1 = self.data_info[drug_name]["matrix1"]
+        # adj2 = self.data_info[drug_name]["matrix2"]
+        adj3 = self.data_info[drug_name]["matrix3"]
+        # adj4 = self.data_info[drug_name]["matrix4"]
+        # adj5 = self.data_info[drug_name]["matrix5"]
+
+        mask_feature_1_1, mask_edges_1_1 = self.random_mask(x_features, adj1)
+        mask_feature_1_2, mask_edges_1_2 = self.random_mask(x_features, adj1)
+
+        # mask_feature_2_1, mask_edges_2_1 = self.random_mask(y_features, adj2)
+        # mask_feature_2_2, mask_edges_2_2 = self.random_mask(y_features, adj2)
+
+        mask_feature_3_1, mask_edges_3_1 = self.random_mask(y_features, adj3)
+        mask_feature_3_2, mask_edges_3_2 = self.random_mask(y_features, adj3)
+        #
+        # mask_feature_4_1, mask_edges_4_1 = self.random_mask(x_features, adj4)
+        # mask_feature_4_2, mask_edges_4_2 = self.random_mask(x_features, adj4)
+        #
+        # mask_feature_5_1, mask_edges_5_1 = self.random_mask(x_features, adj5)
+        # mask_feature_5_2, mask_edges_5_2 = self.random_mask(x_features, adj5)
+
+        data_1_1 = Data(x=mask_feature_1_1, edge_index=mask_edges_1_1)
+        data_1_2 = Data(x=mask_feature_1_2, edge_index=mask_edges_1_2)
+
+        # data_2_1 = Data(x=mask_feature_2_1, edge_index=mask_edges_2_1)
+        # data_2_2 = Data(x=mask_feature_2_2, edge_index=mask_edges_2_2)
+
+        data_3_1 = Data(x=mask_feature_3_1, edge_index=mask_edges_3_1)
+        data_3_2 = Data(x=mask_feature_3_2, edge_index=mask_edges_3_2)
+        #
+        # data_4_1 = Data(x=mask_feature_2_1, edge_index=mask_edges_4_1)
+        # data_4_2 = Data(x=mask_feature_2_2, edge_index=mask_edges_4_2)
+        #
+        # data_5_1 = Data(x=mask_feature_3_1, edge_index=mask_edges_5_1)
+        # data_5_2 = Data(x=mask_feature_3_2, edge_index=mask_edges_5_2)
+
+        return data_1_1, data_1_2, data_3_1, data_3_2
+    def __len__(self):
+        return len(self.name_data)
+
+####
+#加载dataloader
+class MoleculeDatasetWrapper(object):
+    def __init__(self, batch_size,  valid_size, data_path):
+        super(object, self).__init__()
+        self.data_path = data_path
+        self.batch_size = batch_size
+
+        self.valid_size = valid_size
+
+    def get_data_loaders(self):
+        train_dataset = MoleculeDataset(data_path=self.data_path)
+        train_loader, valid_loader = self.get_train_validation_data_loaders(train_dataset)
+        return train_loader, valid_loader
+
+    def get_train_validation_data_loaders(self, train_dataset):
+        # obtain training indices that will be used for validation
+        num_train = len(train_dataset)
+        indices = list(range(num_train))
+        np.random.shuffle(indices)
+
+        split = int(np.floor(self.valid_size * num_train))
+        train_idx, valid_idx = indices[split:], indices[:split]
+
+        # define samplers for obtaining training and validation batches
+        train_sampler = SubsetRandomSampler(train_idx)
+        valid_sampler = SubsetRandomSampler(valid_idx)
+
+        train_loader = DataLoader(
+            train_dataset, batch_size=self.batch_size, sampler=train_sampler,
+            drop_last=True
+        )
+        valid_loader = DataLoader(
+            train_dataset, batch_size=self.batch_size, sampler=valid_sampler,
+            drop_last=True
+        )
+
+        return train_loader, valid_loader
+
+# if __name__ == '__main__':
+#     filePath = "E://ZINC2//sdf/new_file/"
+#     #生成coor1文件
+#     # coor_txt(filePath)
+#     data_path="E://ZINC2//coor1.txt"
+#
+#
+#     dataset = MoleculeDataset(data_path=data_path)
+#     # print(dataset)
+#     # print(dataset.__getitem__(0))
+#
+    # dataset = MoleculeDatasetWrapper(batch_size=1, valid_size=0.1, data_path=data_path)
+    # train_loader, valid_loader = dataset.get_data_loaders()
+    # for bn, (xis, xis2,xjs, xjs2) in enumerate(train_loader):
+    #     print(xis.edge_index)
+    #
+    #     break
