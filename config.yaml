@@ -1,0 +1,30 @@
+batch_size: 1024                     # batch size
+warm_up: 10                             # warm-up epochs
+epochs: 200                            # total number of epochs
+
+load_model: None                        # resume training
+eval_every_n_epochs: 1                  # validation frequency
+save_every_n_epochs: 1                  # automatic model saving frequecy
+log_every_n_steps: 50                   # print training log frequency
+
+fp16_precision: False                   # float precision 16 (i.e. True/False)
+init_lr: 0.001                         # initial learning rate for Adam
+weight_decay: 1e-5                      # weight decay for Adam
+gpu: cuda:0                             # training GPU
+
+model_type: gcn                         # GNN backbone (i.e., gin/gcn)
+model:
+  num_layer: 5                          # number of graph conv layers
+  emb_dim: 300                          # embedding dimension in graph conv layers
+  feat_dim: 512                         # output feature dimention
+  drop_ratio: 0                         # dropout ratio
+  pool: max                            # readout pooling (i.e., mean/max/add)
+
+aug: node                               # molecule graph augmentation strategy (i.e., node/subgraph/mix)
+dataset:
+  valid_size: 0.1                      # ratio of validation data
+  data_path: E://ZINC2//coor2.txt       # path of pre-training data
+
+loss:
+  temperature: 0.1                      # temperature of NT-Xent loss
+  use_cosine_similarity: True
