@@ -1,0 +1,35 @@
+batch_size: 512                  # batch size
+epochs: 100                  # total number of epochs
+eval_every_n_epochs: 1          # validation frequency
+fine_tune_from: model          # sub directory of pre-trained model in ./ckpt
+log_every_n_steps: 300          # print training log frequency
+fp16_precision: False           # float precision 16 (i.e. True/False)
+init_lr: 0.001         #0.0005    0.001    # initial learning rate for the prediction head
+init_base_lr: 0.0005     #0.0001   0005  # initial learning rate for the base GNN encoder
+weight_decay: 1e-6        #1e-6    5   # weight decay of Adam
+gpu: cuda:0                     # training GPU
+task_name: drugbank                 # name of fine-tuning benchmark, inlcuding
+pretrain_model : Nov20_01-53-41
+#AdverseDDI/BIOSNAP/drugbank
+a: 1
+b: 0 #.01
+#c: 0
+
+warm_up: 10
+model_type: gat                 # GNN backbone (i.e., gin/gcn)
+model:
+  num_layer: 5                  # number of graph conv layers
+  emb_dim: 300                  # embedding dimension in graph conv layers
+  feat_dim: 512                 # output feature dimention
+  drop_ratio: 0.2               # dropout ratio
+  pool: max                    # readout pooling (i.e., mean/max/add)
+
+dataset:
+  num_workers: 0                # dataloader number of workers
+  valid_size: 0.1               # ratio of validation data
+  test_size: 0.1                # ratio of test data
+  splitting: scaffold           # data splitting (i.e., random/scaffold)
+
+loss:
+  temperature: 0.1                      # temperature of NT-Xent loss
+  use_cosine_similarity: True
