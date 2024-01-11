@@ -6,19 +6,19 @@ import shutil
 import sys
 import torch
 import yaml
-from NTXentLoss import NTXentLoss
+from tes import NTXentLoss
 import torch.nn.functional as F
 from torch.utils.tensorboard import SummaryWriter
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from datetime import datetime
 # 导入dataset 类
 # from dataset import MoleculeDatasetWrapper
-from process_pre_train import MoleculeDatasetWrapper
+from five_process_pretrain import MoleculeDatasetWrapper
 from dataset_pretrain import myIterableDataset
 # 导入模型GAT类
 # from gat import GATNet
 # from gcn_pretrain import GCNNet
-from gcn_bn_pr import GCNNet
+from five_pretrian import GCNNet
 # from only_one_encode_pretrain import GCNNet
 # 是否使用半精度训练模型
 
@@ -60,9 +60,9 @@ class MOSS(object):
         return device
 
     # 模型迭代
-    def _step(self, model, x1s1, x1s2, x2s1, x2s2, n_iter):
+    def _step(self, model, x1s1, x1s2, x2s1, x2s2, x3s1, x3s2, x4s1, x4s2, x5s1, x5s2, n_iter):
         # get the representations and the projections
-        out1, out2, out3, out4 = model(x1s1, x1s2, x2s1, x2s2)  # [N,C]
+        out1, out2, out3, out4, out5, out6, out7, out8, out9, out10 = model(x1s1, x1s2, x2s1, x2s2, x3s1, x3s2, x4s1, x4s2, x5s1, x5s2)  # [N,C]
         # get the representations and the projections
         # rjs, zjs = model(xjs)  # [N,C]
 
@@ -73,7 +73,16 @@ class MOSS(object):
         out3 = F.normalize(out3, dim=1)
         out4 = F.normalize(out4, dim=1)
 
-        loss = self.nt_xent_criterion(out1, out2)+self.nt_xent_criterion(out3, out4)
+        out5 = F.normalize(out5, dim=1)
+        out6 = F.normalize(out6, dim=1)
+
+        out7 = F.normalize(out7, dim=1)
+        out8 = F.normalize(out8, dim=1)
+
+        out9 = F.normalize(out9, dim=1)
+        out10 = F.normalize(out10, dim=1)
+        loss = self.nt_xent_criterion(out1, out2)+self.nt_xent_criterion(out3, out4)+self.nt_xent_criterion(out5, out6)+\
+               self.nt_xent_criterion(out7, out8)+self.nt_xent_criterion(out9, out10)
         return loss
 
     def train(self):
@@ -106,7 +115,7 @@ class MOSS(object):
         valid_n_iter = 0
         best_valid_loss = np.inf  # 正无穷，类型为浮点型
         for epoch_counter in range(self.config['epochs']):
-            for bn, (x1s1, x1s2, x2s1, x2s2) in enumerate(train_loader):
+            for bn, (x1s1, x1s2, x2s1, x2s2, x3s1, x3s2, x4s1, x4s2, x5s1, x5s2) in enumerate(train_loader):
                 optimizer.zero_grad()  # 梯度归0
                 x1s1 = x1s1.to(self.device)
                 x1s2 = x1s2.to(self.device)
@@ -114,7 +123,15 @@ class MOSS(object):
                 x2s1 = x2s1.to(self.device)
                 x2s2 = x2s2.to(self.device)
 
-                loss = self._step(model, x1s1, x1s2, x2s1, x2s2, n_iter)
+                x3s1 = x3s1.to(self.device)
+                x3s2 = x3s2.to(self.device)
+
+                x4s1 = x4s1.to(self.device)
+                x4s2 = x4s2.to(self.device)
+
+                x5s1 = x5s1.to(self.device)
+                x5s2 = x5s2.to(self.device)
+                loss = self._step(model, x1s1, x1s2, x2s1, x2s2, x3s1, x3s2, x4s1, x4s2, x5s1, x5s2, n_iter)
                 # 每50次保存一下loss
                 if n_iter % self.config['log_every_n_steps'] == 0:
                     self.writer.add_scalar('train_loss', loss, global_step=n_iter)
@@ -165,14 +182,23 @@ class MOSS(object):
 
             valid_loss = 0.0
             counter = 0
-            for (x1s1, x1s2, x2s1, x2s2) in valid_loader:
+            for (x1s1, x1s2, x2s1, x2s2, x3s1, x3s2, x4s1, x4s2, x5s1, x5s2) in valid_loader:
                 x1s1 = x1s1.to(self.device)
                 x1s2 = x1s2.to(self.device)
 
                 x2s1 = x2s1.to(self.device)
                 x2s2 = x2s2.to(self.device)
 
-                loss = self._step(model, x1s1, x1s2, x2s1, x2s2, counter)
+                x3s1 = x3s1.to(self.device)
+                x3s2 = x3s2.to(self.device)
+
+                x4s1 = x4s1.to(self.device)
+                x4s2 = x4s2.to(self.device)
+
+                x5s1 = x5s1.to(self.device)
+                x5s2 = x5s2.to(self.device)
+
+                loss = self._step(model, x1s1, x1s2, x2s1, x2s2, x3s1, x3s2, x4s1, x4s2, x5s1, x5s2, counter)
 
                 valid_loss += loss.item()
                 counter += 1
