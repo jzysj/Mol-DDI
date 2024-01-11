@@ -55,40 +55,40 @@ def read_name(data_path):
                 new_adj1 = np.where((matrix <= 0) | (matrix >= 2), 0, matrix)
                 features1 = torch.Tensor(Calculate_feature(new_adj1, sample_atom))
 
-                # new_adj2 = np.where((matrix < 2) | (matrix >= 4), 0, matrix)
-                # features2 = torch.Tensor(Calculate_feature(new_adj2, sample_atom))
-                #
+                new_adj2 = np.where((matrix < 2) | (matrix >= 4), 0, matrix)
+                features2 = torch.Tensor(Calculate_feature(new_adj2, sample_atom))
+
                 new_adj3 = np.where((matrix < 4) | (matrix >= 6), 0, matrix)
                 features3 = torch.Tensor(Calculate_feature(new_adj3, sample_atom))
                 #
-                # new_adj4 = np.where((matrix < 6) | (matrix >= 8), 0, matrix)
-                # features4 = torch.Tensor(Calculate_feature(new_adj4, sample_atom))
+                new_adj4 = np.where((matrix < 6) | (matrix >= 8), 0, matrix)
+                features4 = torch.Tensor(Calculate_feature(new_adj4, sample_atom))
                 #
-                # new_adj5 = np.where(matrix <= 8, 0, matrix)
-                # features5 = torch.Tensor(Calculate_feature(new_adj5, sample_atom))
+                new_adj5 = np.where(matrix <= 8, 0, matrix)
+                features5 = torch.Tensor(Calculate_feature(new_adj5, sample_atom))
 
-                # seq = [4]
-                # sample_constive = np.random.choice(seq, 1, replace=False)  # 随机形成两个对比视图
                 # 生成不同视图的邻接矩阵
                 adj1 = torch.LongTensor(np.asarray(np.where((matrix > 0) & (matrix < 2))))
-                # adj2 = torch.LongTensor(np.asarray(np.where((matrix >= 2) & (matrix < 4))))
+                adj2 = torch.LongTensor(np.asarray(np.where((matrix >= 2) & (matrix < 4))))
                 adj3 = torch.LongTensor(np.asarray(np.where((matrix >= 4) & (matrix < 6))))
-                # adj4 = torch.LongTensor(np.asarray(np.where((matrix >= 6) & (matrix < 8))))
+                adj4 = torch.LongTensor(np.asarray(np.where((matrix >= 6) & (matrix < 8))))
                 adj5 = torch.LongTensor(
                         np.array(np.where((matrix >= 8))))
 
                 data_info[data_line]["feature1"] = features1
+                data_info[data_line]["feature2"] = features2
                 data_info[data_line]["feature3"] = features3
-
+                data_info[data_line]["feature4"] = features4
+                data_info[data_line]["feature5"] = features5
 
                 data_info[data_line]["matrix1"] = adj1
-                # data_info[data_line]["matrix2"] = adj2
+                data_info[data_line]["matrix2"] = adj2
                 data_info[data_line]["matrix3"] = adj3
-                # data_info[data_line]["matrix4"] = adj4
-                # data_info[data_line]["matrix5"] = adj5
+                data_info[data_line]["matrix4"] = adj4
+                data_info[data_line]["matrix5"] = adj5
                 sample_atom = []
                 sample_xyz = []
-                if len(data_info) == 100000:  # 读取定量的数据预训练
+                if len(data_info) == 400000:  # 读取定量的数据预训练
                     print(len(data_info))
                     # file = open("./dict.txt","w")
                     # for k,v in data_info.items():
@@ -227,46 +227,49 @@ class MoleculeDataset(Dataset):
     def __getitem__(self, index):
         drug_name = self.name_data[index]  # 读取药物名称
         # 生成药物的位置矩阵
-        x_features = self.data_info[drug_name]["feature1"]
-        y_features = self.data_info[drug_name]["feature3"]
-        # print(drug_atoms)
+        features_1 = self.data_info[drug_name]["feature1"]
+        features_2 = self.data_info[drug_name]["feature2"]
+        features_3 = self.data_info[drug_name]["feature3"]
+        features_4 = self.data_info[drug_name]["feature4"]
+        features_5 = self.data_info[drug_name]["feature5"]
+
         adj1 = self.data_info[drug_name]["matrix1"]
-        # adj2 = self.data_info[drug_name]["matrix2"]
+        adj2 = self.data_info[drug_name]["matrix2"]
         adj3 = self.data_info[drug_name]["matrix3"]
-        # adj4 = self.data_info[drug_name]["matrix4"]
-        # adj5 = self.data_info[drug_name]["matrix5"]
+        adj4 = self.data_info[drug_name]["matrix4"]
+        adj5 = self.data_info[drug_name]["matrix5"]
 
-        mask_feature_1_1, mask_edges_1_1 = self.random_mask(x_features, adj1)
-        mask_feature_1_2, mask_edges_1_2 = self.random_mask(x_features, adj1)
+        mask_feature_1_1, mask_edges_1_1 = self.random_mask(features_1, adj1)
+        mask_feature_1_2, mask_edges_1_2 = self.random_mask(features_1, adj1)
 
-        # mask_feature_2_1, mask_edges_2_1 = self.random_mask(y_features, adj2)
-        # mask_feature_2_2, mask_edges_2_2 = self.random_mask(y_features, adj2)
+        mask_feature_2_1, mask_edges_2_1 = self.random_mask(features_2, adj2)
+        mask_feature_2_2, mask_edges_2_2 = self.random_mask(features_2, adj2)
 
-        mask_feature_3_1, mask_edges_3_1 = self.random_mask(y_features, adj3)
-        mask_feature_3_2, mask_edges_3_2 = self.random_mask(y_features, adj3)
+        mask_feature_3_1, mask_edges_3_1 = self.random_mask(features_3, adj3)
+        mask_feature_3_2, mask_edges_3_2 = self.random_mask(features_3, adj3)
         #
-        # mask_feature_4_1, mask_edges_4_1 = self.random_mask(x_features, adj4)
-        # mask_feature_4_2, mask_edges_4_2 = self.random_mask(x_features, adj4)
+        mask_feature_4_1, mask_edges_4_1 = self.random_mask(features_4, adj4)
+        mask_feature_4_2, mask_edges_4_2 = self.random_mask(features_4, adj4)
         #
-        # mask_feature_5_1, mask_edges_5_1 = self.random_mask(x_features, adj5)
-        # mask_feature_5_2, mask_edges_5_2 = self.random_mask(x_features, adj5)
+        mask_feature_5_1, mask_edges_5_1 = self.random_mask(features_5, adj5)
+        mask_feature_5_2, mask_edges_5_2 = self.random_mask(features_5, adj5)
 
         data_1_1 = Data(x=mask_feature_1_1, edge_index=mask_edges_1_1)
         data_1_2 = Data(x=mask_feature_1_2, edge_index=mask_edges_1_2)
 
-        # data_2_1 = Data(x=mask_feature_2_1, edge_index=mask_edges_2_1)
-        # data_2_2 = Data(x=mask_feature_2_2, edge_index=mask_edges_2_2)
+        data_2_1 = Data(x=mask_feature_2_1, edge_index=mask_edges_2_1)
+        data_2_2 = Data(x=mask_feature_2_2, edge_index=mask_edges_2_2)
 
         data_3_1 = Data(x=mask_feature_3_1, edge_index=mask_edges_3_1)
         data_3_2 = Data(x=mask_feature_3_2, edge_index=mask_edges_3_2)
         #
-        # data_4_1 = Data(x=mask_feature_2_1, edge_index=mask_edges_4_1)
-        # data_4_2 = Data(x=mask_feature_2_2, edge_index=mask_edges_4_2)
+        data_4_1 = Data(x=mask_feature_2_1, edge_index=mask_edges_4_1)
+        data_4_2 = Data(x=mask_feature_2_2, edge_index=mask_edges_4_2)
         #
-        # data_5_1 = Data(x=mask_feature_3_1, edge_index=mask_edges_5_1)
-        # data_5_2 = Data(x=mask_feature_3_2, edge_index=mask_edges_5_2)
+        data_5_1 = Data(x=mask_feature_3_1, edge_index=mask_edges_5_1)
+        data_5_2 = Data(x=mask_feature_3_2, edge_index=mask_edges_5_2)
 
-        return data_1_1, data_1_2, data_3_1, data_3_2
+        return data_1_1, data_1_2, data_2_1,data_2_2,data_3_1, data_3_2, data_4_1, data_4_2, data_5_1, data_5_2
     def __len__(self):
         return len(self.name_data)
 
