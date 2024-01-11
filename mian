@@ -6,7 +6,7 @@ import shutil
 import sys
 import torch
 import yaml
-from tes import NTXentLoss
+from NTXentLoss import NTXentLoss
 import torch.nn.functional as F
 from torch.utils.tensorboard import SummaryWriter
 from torch.optim.lr_scheduler import CosineAnnealingLR
